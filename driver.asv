@@ -1,0 +1,176 @@
+clear all;
+clc
+
+imgFilename = '..\data\calibration_image.jpg';
+
+
+targetImg = imread(imgFilename);
+outputImg = imread(imgFilename);
+originalImage = targetImg;
+redChannel = originalImage(:, :, 1);
+greenChannel = originalImage(:, :, 2);
+blueChannel = originalImage(:, :, 3);
+redMask = (redChannel > 200) & (greenChannel < 100) & (blueChannel < 100);
+blackImage = zeros(size(originalImage), 'uint8');
+blackImage(:, :, 1) = blackImage(:, :, 1) + uint8(redMask) * 255;
+targetImg = blackImage;
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Convert image to gray scale
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Converting to grey scale by taking mean value of red,green,blue pixel and dividing by maximum     
+[rows, columns, ~] = size(targetImg);
+img_GrayScale = mean(double(targetImg),3)./max(double(targetImg(:)));
+imshow(img_GrayScale);
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Define parameters for desired implementation
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+numScales = 10;
+sigma = 25;
+scaleMultiplier = sqrt(sqrt(2)); %scale multiplication constant  
+threshold = 0.008; %for the double image which is all 0->1
+
+%%%%%%%%%%%%%%
+%% Detect blobs
+%%%%%%%%%%%%%%
+
+%%slowdown: Increase Kernel Size
+scaleSpace_3D_NMS = detectBlobs( img_GrayScale, numScales, sigma, false, scaleMultiplier, threshold ); 
+
+%%speedup: Reduce image size
+%scaleSpace_3D_NMS = detectBlobs( img_GrayScale, numScales, sigma, true, scaleMultiplier, threshold );
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Display resulting circles at their characteristic scales
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+radiiByScale = calcRadiiByScale(numScales,  scaleMultiplier, sigma);
+blobMarkers = retrieveBlobMarkers(scaleSpace_3D_NMS, radiiByScale);
+xPos = blobMarkers(:,1); %col positions
+disp(class(xPos));
+yPos = blobMarkers(:,2); %row positions
+disp(yPos);
+radii = blobMarkers(:,3); %radii
+
+%show_all_circles(img_GrayScale, xPos, yPos, radii, 'r', .5); %overlay on gray img
+
+[height, width, channels] = size(targetImg);
+
+image_with_circles = zeros(height, width, channels, 'uint8'); % Adjust the size as needed
+
+%%%%%%%%%
+src_coords = horzcat(xPos, yPos);
+disp(src_coords);
+
+dst_coords = [0,0;0,height-1;width-1,height-1;width-1,0];
+
+disp(dst_coords);
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+tform = fitgeotrans(src_coords, dst_coords, 'projective');
+
+birdseye_view = imwarp(outputImg, tform, 'OutputView', imref2d(output_size));
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+figure;
+subplot(1, 2, 1);
+imshow(outputImg);
+title('Image 1');
+
+subplot(1, 2, 2);
+imshow(birdseye_view);
+title('Image 2');
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function H = compute_homography(src, dst)
+    N = size(src, 1);
+    A = zeros(2 * N, 9);
+
+    for i = 1:N
+        x = src(i, 1);
+        y = src(i, 2);
+        u = dst(i, 1);
+        v = dst(i, 2);
+
+        A(2 * i, :) = [-x, -y, -1, 0, 0, 0, x * u, y * u, u];
+        A(2 * i + 1, :) = [0, 0, 0, -x, -y, -1, x * v, y * v, v];
+    end
+
+    [~, ~, V] = svd(A);
+    H = reshape(V(:, end), [3, 3]);
+end
+
+% TO DO: Implement the apply_homography function
+
+
+function dst_img = warp_img(src_img, H, dst_img_size)
+    dst_img = zeros(dst_img_size(1), dst_img_size(2), 3);
+    H_inv = inv(H);
+    for i = 1:dst_img_size(1)
+        for j = 1:dst_img_size(2)
+            p = [i; j; 1];
+            t_p = H_inv * p;
+            x = round(t_p(1) / t_p(3));
+            y = round(t_p(2) / t_p(3));
+
+            if 0 < x && x <= size(src_img, 1) && 0 < y && y <= size(src_img, 2)
+                dst_img(i, j, :) = src_img(x, y, :);
+            end
+        end
+    end
+end
+
+
+function bev(src_coords,dst_coords,img_GrayScale)
+    % Defining manually identified corresponding pixel in source and destination image
+   
+
+    % Computing the homography matrix
+    H = compute_homography(src_coords, dst_coords);
+
+    % Warping the source image (image1) to image2 dimensions using the homogrpahy matrix
+    dst = warp_img(img_GrayScale, H, size(img_GrayScale));
+    imshow(dst);
+
+    % Overlaying the warped image onto image 2
+    overlay = img_GrayScale;
+    for x = 1:size(overlay, 1)
+        for y = 1:size(overlay, 2)
+            if ~isequal(dst(x, y, :), [0, 0, 0])
+                overlay(x, y, :) = dst(x, y, :);
+            end
+        end
+    end
+
+    % Displaying the stitched image
+    imshow(overlay);
+end
+
+
+
+
+
+
